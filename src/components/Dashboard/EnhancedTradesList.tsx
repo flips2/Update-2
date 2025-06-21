@@ -98,12 +98,27 @@ const EnhancedTradesList: React.FC<EnhancedTradesListProps> = ({
   };
 
   const isCommentLong = (comment: string) => {
-    return comment && comment.split('\n').length > 3;
+    if (!comment) return false;
+    // Check if comment has more than 2 lines OR is longer than 100 characters
+    return comment.split('\n').length > 2 || comment.length > 100;
   };
 
   const getTruncatedComment = (comment: string) => {
+    if (!comment) return '';
+    
     const lines = comment.split('\n');
-    return lines.slice(0, 3).join('\n') + (lines.length > 3 ? '...' : '');
+    
+    // If it has multiple lines and more than 3, truncate by lines
+    if (lines.length > 2) {
+      return lines.slice(0, 3).join('\n') + '...';
+    }
+    
+    // If it's a single long line, truncate by character count
+    if (comment.length > 100) {
+      return comment.substring(0, 100) + '...';
+    }
+    
+    return comment;
   };
 
   if (trades.length === 0) {
@@ -117,12 +132,12 @@ const EnhancedTradesList: React.FC<EnhancedTradesListProps> = ({
   }
 
   return (
-    <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden h-full flex flex-col">
-      <div className="p-6 border-b border-slate-700">
+    <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden flex flex-col max-h-[1400px]">
+      <div className="p-6 border-b border-slate-700 flex-shrink-0">
         <h3 className="text-lg font-semibold text-white">Recent Trades</h3>
       </div>
       
-      <div className="flex-1 overflow-y-auto scrollbar-glow">
+      <div className="flex-1 overflow-y-auto scrollbar-glow min-h-0">
         <div className="space-y-0">
           {trades.map((trade, index) => (
             <motion.div

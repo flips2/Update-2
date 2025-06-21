@@ -40,8 +40,8 @@ const ForexTradeForm: React.FC<ForexTradeFormProps> = ({ onAddTrade, sessionId }
     reason: 'Other',
     pnlUsd: '',
     margin: '1000',
-    leverage: '100',
-    contractSize: '100000',
+    leverage: '1000',
+    contractSize: '100',
     roi: '',
     entrySide: 'Long' as 'Long' | 'Short',
     comments: ''
@@ -122,10 +122,28 @@ const ForexTradeForm: React.FC<ForexTradeFormProps> = ({ onAddTrade, sessionId }
 
       const extractedData = await enhancedAiService.analyzeScreenshot(file);
       
+      // Helper function to convert ISO string to datetime-local format
+      const formatForDateTimeLocal = (isoString: string | undefined): string => {
+        if (!isoString) {
+          return new Date().toISOString().slice(0, 16);
+        }
+        // Convert ISO string to datetime-local format (YYYY-MM-DDTHH:mm)
+        return new Date(isoString).toISOString().slice(0, 16);
+      };
+      
       // Populate form with extracted data including dates
-      const now = new Date();
-      const openTime = extractedData.openTime || now.toISOString().slice(0, 16);
-      const closeTime = extractedData.closeTime || now.toISOString().slice(0, 16);
+      const openTime = formatForDateTimeLocal(extractedData.openTime);
+      const closeTime = formatForDateTimeLocal(extractedData.closeTime);
+      
+      // Add debug logging to verify time conversion
+      console.log('Raw extracted times:', {
+        openTime: extractedData.openTime,
+        closeTime: extractedData.closeTime
+      });
+      console.log('Converted for form:', {
+        openTime,
+        closeTime
+      });
       
       setFormData(prev => ({
         ...prev,
@@ -325,8 +343,8 @@ const ForexTradeForm: React.FC<ForexTradeFormProps> = ({ onAddTrade, sessionId }
         reason: 'Other',
         pnlUsd: '',
         margin: '1000',
-        leverage: '100',
-        contractSize: '100000',
+        leverage: '1000',
+        contractSize: '100',
         roi: '',
         entrySide: 'Long',
         comments: ''

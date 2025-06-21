@@ -36,6 +36,7 @@ const CryptoTradeForm: React.FC<CryptoTradeFormProps> = ({ onAddTrade, sessionId
     marginAdjustmentHistory: '',
     closingQuantity: '',
     realizedPnl: '',
+    margin: '', // Add manual margin field
     comments: ''
   });
 
@@ -97,12 +98,30 @@ const CryptoTradeForm: React.FC<CryptoTradeFormProps> = ({ onAddTrade, sessionId
       const blob = await response.blob();
       const file = new File([blob], fileName, { type: blob.type });
 
-      const extractedData = await enhancedAiService.analyzeScreenshot(file);
+      const extractedData = await enhancedAiService.analyzeCryptoScreenshot(file);
+      
+      // Helper function to convert ISO string to datetime-local format
+      const formatForDateTimeLocal = (isoString: string | undefined): string => {
+        if (!isoString) {
+          return new Date().toISOString().slice(0, 16);
+        }
+        // Convert ISO string to datetime-local format (YYYY-MM-DDTHH:mm)
+        return new Date(isoString).toISOString().slice(0, 16);
+      };
       
       // Populate form with extracted data including dates
-      const now = new Date();
-      const openTime = extractedData.openTime || now.toISOString().slice(0, 16);
-      const closeTime = extractedData.closeTime || now.toISOString().slice(0, 16);
+      const openTime = formatForDateTimeLocal(extractedData.openTime);
+      const closeTime = formatForDateTimeLocal(extractedData.closeTime);
+      
+      // Add debug logging to verify time conversion
+      console.log('Raw extracted crypto times:', {
+        openTime: extractedData.openTime,
+        closeTime: extractedData.closeTime
+      });
+      console.log('Converted for crypto form:', {
+        openTime,
+        closeTime
+      });
       
       setFormData(prev => ({
         ...prev,
@@ -116,11 +135,12 @@ const CryptoTradeForm: React.FC<CryptoTradeFormProps> = ({ onAddTrade, sessionId
         marginAdjustmentHistory: extractedData.marginAdjustmentHistory || '',
         closingQuantity: extractedData.closingQuantity?.toString() || extractedData.volumeLot?.toString() || '',
         realizedPnl: extractedData.realizedPnl?.toString() || extractedData.pnlUsd?.toString() || '',
+        margin: '', // Keep margin empty for manual input
         comments: `Auto-extracted from ${fileName}`
       }));
 
       setExtractionStatus('success');
-      toast.success('Crypto trade data extracted successfully!');
+      toast.success('Crypto trade data extracted successfully! 🚀');
     } catch (error: any) {
       console.error('Extraction error:', error);
       
@@ -238,26 +258,11 @@ const CryptoTradeForm: React.FC<CryptoTradeFormProps> = ({ onAddTrade, sessionId
   };
 
   const calculateROI = () => {
-    const entryPrice = parseFloat(formData.avgEntryPrice);
-    const closePrice = parseFloat(formData.avgClosePrice);
-    const quantity = parseFloat(formData.closingQuantity);
+    const margin = parseFloat(formData.margin);
+    const pnl = parseFloat(formData.realizedPnl);
     
-    if (entryPrice && closePrice && quantity) {
-      const margin = entryPrice * quantity; // Simplified margin calculation
-      const pnl = parseFloat(formData.realizedPnl);
-      if (margin && pnl) {
-        return ((pnl / margin) * 100).toFixed(2);
-      }
-    }
-    return '';
-  };
-
-  const calculateMargin = () => {
-    const entryPrice = parseFloat(formData.avgEntryPrice);
-    const quantity = parseFloat(formData.closingQuantity);
-    
-    if (entryPrice && quantity) {
-      return (entryPrice * quantity).toFixed(2);
+    if (margin && pnl) {
+      return ((pnl / margin) * 100).toFixed(2);
     }
     return '';
   };
@@ -265,15 +270,15 @@ const CryptoTradeForm: React.FC<CryptoTradeFormProps> = ({ onAddTrade, sessionId
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!formData.realizedPnl || !formData.avgEntryPrice) {
-      toast.error('Please fill in realized P&L and entry price fields');
+    if (!formData.realizedPnl || !formData.margin) {
+      toast.error('Please fill in realized P&L and margin fields');
       return;
     }
 
     setLoading(true);
 
     try {
-      const margin = parseFloat(calculateMargin() || '0');
+      const margin = parseFloat(formData.margin);
       const roi = parseFloat(calculateROI() || '0');
       
       const trade: Omit<Trade, 'id' | 'created_at'> = {
@@ -310,6 +315,7 @@ const CryptoTradeForm: React.FC<CryptoTradeFormProps> = ({ onAddTrade, sessionId
         marginAdjustmentHistory: '',
         closingQuantity: '',
         realizedPnl: '',
+        margin: '',
         comments: ''
       });
       
@@ -654,8 +660,8 @@ const CryptoTradeForm: React.FC<CryptoTradeFormProps> = ({ onAddTrade, sessionId
           </div>
         </div>
 
-        {/* Quantity and P&L */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Quantity, P&L, and Margin */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-2">
               Closing Quantity
@@ -683,6 +689,24 @@ const CryptoTradeForm: React.FC<CryptoTradeFormProps> = ({ onAddTrade, sessionId
               step="0.01"
               required
             />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-2">
+              Margin (USD) *
+            </label>
+            <input
+              type="number"
+              value={formData.margin}
+              onChange={(e) => handleInputChange('margin', e.target.value)}
+              className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
+              placeholder="1000.00"
+              step="0.01"
+              required
+            />
+            <p className="text-xs text-slate-400 mt-1">
+              Manual entry required
+            </p>
           </div>
         </div>
 
@@ -714,28 +738,18 @@ const CryptoTradeForm: React.FC<CryptoTradeFormProps> = ({ onAddTrade, sessionId
           />
         </div>
 
-        {/* Calculated Values Display */}
-        {formData.avgEntryPrice && formData.closingQuantity && (
+        {/* ROI Display */}
+        {formData.realizedPnl && formData.margin && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             className="bg-slate-700 rounded-lg p-4 border border-slate-600"
           >
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <span className="text-sm text-slate-300">Calculated Margin: </span>
-                <span className="text-lg font-bold text-blue-400">
-                  {formatCurrency(parseFloat(calculateMargin() || '0'))}
-                </span>
-              </div>
-              {formData.realizedPnl && (
-                <div>
-                  <span className="text-sm text-slate-300">Calculated ROI: </span>
-                  <span className="text-lg font-bold text-blue-400">
-                    {calculateROI()}%
-                  </span>
-                </div>
-              )}
+            <div className="flex items-center text-slate-300">
+              <span className="text-sm">Calculated ROI: </span>
+              <span className="text-lg font-bold text-blue-400 ml-2">
+                {calculateROI()}%
+              </span>
             </div>
           </motion.div>
         )}
