@@ -145,9 +145,9 @@ class MarketDataService {
 
   async getFinancialNews(): Promise<NewsItem[]> {
     try {
-      // Using a free news API - you might want to replace with a better one
+      // Using News Data IO API for financial news
       const response = await fetch(
-        'https://newsapi.org/v2/everything?q=bitcoin+ethereum+gold+trading&sortBy=publishedAt&pageSize=5&apiKey=YOUR_NEWS_API_KEY'
+        'https://newsdata.io/api/1/latest?apikey=pub_906197ebfb9c4b7ea4a5ae06b3290e6b&q=bitcoin+ethereum+gold+trading+finance&language=en&size=5'
       );
       
       if (!response.ok) {
@@ -156,13 +156,17 @@ class MarketDataService {
       
       const data = await response.json();
       
-      return data.articles.map((article: any) => ({
-        title: article.title,
-        summary: article.description || article.title,
-        url: article.url,
-        publishedAt: article.publishedAt,
-        source: article.source.name
-      }));
+      if (data.status === 'success' && data.results) {
+        return data.results.map((article: any) => ({
+          title: article.title || 'Untitled',
+          summary: article.description || article.title || 'No summary available',
+          url: article.link || '#',
+          publishedAt: article.pubDate || new Date().toISOString(),
+          source: article.source_name || 'Unknown Source'
+        }));
+      } else {
+        throw new Error('Invalid response format from News Data IO');
+      }
     } catch (error) {
       console.error('Error fetching financial news:', error);
       // Return mock data as fallback
