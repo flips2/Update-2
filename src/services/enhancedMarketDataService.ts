@@ -18,12 +18,45 @@ export interface FearGreedIndex {
 }
 
 export interface NewsItem {
+  article_id: string;
   title: string;
-  summary: string;
-  url: string;
-  publishedAt: string;
-  source: string;
-  imageUrl?: string;
+  description: string;
+  link: string;
+  pubDate: string;
+  source_id: string;
+  source_name: string;
+  source_url: string;
+  source_icon?: string;
+  image_url?: string;
+  category?: string[];
+}
+
+interface NewsDataArticle {
+  article_id: string;
+  title: string;
+  description: string;
+  link: string;
+  keywords: string[] | null;
+  creator: string[] | null;
+  content: string;
+  pubDate: string;
+  pubDateTZ: string;
+  image_url: string | null;
+  video_url: string | null;
+  source_id: string;
+  source_name: string;
+  source_priority: number;
+  source_url: string;
+  source_icon: string | null;
+  language: string;
+  country: string[];
+  category: string[];
+}
+
+interface NewsDataResponse {
+  status: string;
+  totalResults: number;
+  results: NewsDataArticle[];
 }
 
 export interface MarketData {
@@ -39,7 +72,7 @@ export interface MarketData {
 class EnhancedMarketDataService {
   private readonly CMC_API_KEY = 'f7e5f581-2dbb-43b6-81af-ba8949c0905d';
   private readonly TRADERMADE_API_KEY = 'Ex8yL2gOy1ta5Go4LPLl';
-  private readonly NEWSAPI_KEY = '17814ef36d29422cb4855df54e08bb9f';
+  private readonly NEWSDATA_API_KEY = 'pub_74114f73c55c40ecaffda960ecf87002';
   private readonly FEAR_GREED_URL = 'https://api.alternative.me/fng/';
   
   async getCryptoPrices(): Promise<{ btc: CryptoPrice; eth: CryptoPrice }> {
@@ -168,68 +201,95 @@ class EnhancedMarketDataService {
 
   async getFinancialNews(): Promise<NewsItem[]> {
     try {
-      // Using NewsAPI.org for comprehensive financial news
+      // Using NewsData.io API for comprehensive financial news
       const response = await fetch(
-        `https://newsapi.org/v2/everything?q=bitcoin+OR+ethereum+OR+gold+OR+trading+OR+cryptocurrency&sortBy=publishedAt&pageSize=10&language=en&apiKey=${this.NEWSAPI_KEY}`
+        `https://newsdata.io/api/1/latest?apikey=${this.NEWSDATA_API_KEY}&q=bitcoin OR ethereum OR gold OR trading OR cryptocurrency OR stock market&language=en&country=us`
       );
       
       if (!response.ok) {
         throw new Error('Failed to fetch financial news');
       }
       
-      const data = await response.json();
+      const data = await response.json() as NewsDataResponse;
       
-      return data.articles.map((article: any) => ({
-        title: article.title,
-        summary: article.description || article.title,
-        url: article.url,
-        publishedAt: article.publishedAt,
-        source: article.source.name,
-        imageUrl: article.urlToImage
-      })).filter((article: NewsItem) => 
-        article.title && 
-        article.title !== '[Removed]' && 
-        article.summary && 
-        article.summary !== '[Removed]'
-      );
+      if (!data.results || !Array.isArray(data.results)) {
+        throw new Error('Invalid news data format');
+      }
+
+      return data.results
+        .filter((article: NewsDataArticle) => article.title && article.description)
+        .map((article: NewsDataArticle) => ({
+          article_id: article.article_id,
+          title: article.title,
+          description: article.description,
+          link: article.link,
+          pubDate: article.pubDate,
+          source_id: article.source_id,
+          source_name: article.source_name,
+          source_url: article.source_url,
+          source_icon: article.source_icon || undefined,
+          image_url: article.image_url || undefined,
+          category: article.category
+        }))
+        .slice(0, 10); // Limit to 10 articles for consistency
     } catch (error) {
       console.error('Error fetching financial news:', error);
       // Return mock data as fallback
       return [
         {
+          article_id: "mock_1",
           title: "Bitcoin Reaches New Monthly High Amid Institutional Adoption",
-          summary: "Bitcoin continues its upward momentum as major institutions increase their cryptocurrency holdings, driving market confidence.",
-          url: "#",
-          publishedAt: new Date().toISOString(),
-          source: "Crypto News Today"
+          description: "Bitcoin continues its upward momentum as major institutions increase their cryptocurrency holdings, driving market confidence.",
+          link: "#",
+          pubDate: new Date().toISOString(),
+          source_id: "crypto_news_today",
+          source_name: "Crypto News Today",
+          source_url: "#",
+          category: ["cryptocurrency"]
         },
         {
+          article_id: "mock_2",
           title: "Gold Prices Stabilize as Safe Haven Demand Increases",
-          summary: "Gold maintains its position as a preferred safe haven asset during periods of market uncertainty and inflation concerns.",
-          url: "#",
-          publishedAt: new Date(Date.now() - 3600000).toISOString(),
-          source: "Financial Times"
+          description: "Gold maintains its position as a preferred safe haven asset during periods of market uncertainty and inflation concerns.",
+          link: "#",
+          pubDate: new Date(Date.now() - 3600000).toISOString(),
+          source_id: "financial_times",
+          source_name: "Financial Times",
+          source_url: "#",
+          category: ["commodities"]
         },
         {
+          article_id: "mock_3",
           title: "Ethereum Network Upgrade Shows Promising Results",
-          summary: "Latest Ethereum improvements focus on scalability and reduced transaction fees, attracting more developers to the platform.",
-          url: "#",
-          publishedAt: new Date(Date.now() - 7200000).toISOString(),
-          source: "Blockchain Today"
+          description: "Latest Ethereum improvements focus on scalability and reduced transaction fees, attracting more developers to the platform.",
+          link: "#",
+          pubDate: new Date(Date.now() - 7200000).toISOString(),
+          source_id: "blockchain_today",
+          source_name: "Blockchain Today",
+          source_url: "#",
+          category: ["cryptocurrency"]
         },
         {
+          article_id: "mock_4",
           title: "Trading Volume Surges Across Major Cryptocurrency Exchanges",
-          summary: "Increased retail and institutional trading activity drives record volumes across leading crypto trading platforms.",
-          url: "#",
-          publishedAt: new Date(Date.now() - 10800000).toISOString(),
-          source: "Market Watch"
+          description: "Increased retail and institutional trading activity drives record volumes across leading crypto trading platforms.",
+          link: "#",
+          pubDate: new Date(Date.now() - 10800000).toISOString(),
+          source_id: "market_watch",
+          source_name: "Market Watch",
+          source_url: "#",
+          category: ["cryptocurrency", "trading"]
         },
         {
+          article_id: "mock_5",
           title: "Central Banks Consider Digital Currency Implementations",
-          summary: "Multiple central banks worldwide are accelerating their digital currency research and pilot programs.",
-          url: "#",
-          publishedAt: new Date(Date.now() - 14400000).toISOString(),
-          source: "Reuters"
+          description: "Multiple central banks worldwide are accelerating their digital currency research and pilot programs.",
+          link: "#",
+          pubDate: new Date(Date.now() - 14400000).toISOString(),
+          source_id: "reuters",
+          source_name: "Reuters",
+          source_url: "#",
+          category: ["finance"]
         }
       ];
     }

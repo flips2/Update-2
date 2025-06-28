@@ -2,6 +2,16 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { supabase } from '../lib/supabase';
 import { ExtractedTradeData, ChatMessage } from '../types';
 
+interface MarketData {
+  searchResults?: Array<{
+    title: string;
+    url: string;
+    publishedDate?: string;
+    author?: string;
+    content?: string;
+  }>;
+}
+
 const genAI = new GoogleGenerativeAI('AIzaSyDQVkAyAqPuonnplLxqEhhGyW_FqjteaVw');
 
 export class EnhancedAIService {
@@ -12,6 +22,7 @@ export class EnhancedAIService {
     "I'm temporarily unavailable, but your trading data is safe. Try again in a few moments! 🔄",
     "High traffic detected! While I recover, you can still use all other features of the platform! ⚡"
   ];
+  private readonly EXA_API_KEY = 'YOUR_EXA_API_KEY'; // Replace with your Exa API key
 
   private getRandomFallback(): string {
     return this.fallbackResponses[Math.floor(Math.random() * this.fallbackResponses.length)];
@@ -56,7 +67,7 @@ export class EnhancedAIService {
       });
 
       // Simplified prompt for better quota efficiency
-      const prompt = `Analyze this trading table screenshot and extract ALL visible data. This is a trading history table with the following structure:
+      const prompt = `Analyze this forex trading table screenshot and extract ALL visible data. This is a trading history table with the following structure:
 
 **TABLE FORMAT (left to right columns):**
 1. Symbol (e.g., XAU/USD, EUR/USD)
@@ -66,7 +77,7 @@ export class EnhancedAIService {
 5. Close Price (exit price) 
 6. **T/P (Take Profit)** - CRITICAL: This is column 6, always extract this number
 7. **S/L (Stop Loss)** - CRITICAL: This is column 7, always extract this number
-8. Position ID or status
+8. Trade Status - Look for text like "Open", "Closed", "Completed" (NOT the position/order ID number)
 9. Open Time (format: "Jun 16, 8:50:55 PM")
 10. Close Time (format: "Jun 16, 11:41:00 PM")
 11. Additional columns (Swap, Reason, P/L)
@@ -76,7 +87,11 @@ export class EnhancedAIService {
 - Times are in format "Jun 16, 8:50:55 PM" - convert to ISO format "2024-06-16T20:50:55Z"
 - Numbers may have commas (3,401.188) - extract as numbers without commas
 - Look for +/- in P/L column for profit/loss values
-- The table has NO headers - identify columns by position from left to right
+- For Trade Status:
+  - Look for text indicating if trade is open or closed
+  - Do NOT extract position/order ID numbers as status
+  - Valid status values are: "Open", "Closed", "All Closed", "Completed"
+  - If you see a number instead of status, set position to null
 
 **DATETIME CONVERSION:**
 - "Jun 16, 8:50:55 PM" → "2024-06-16T20:50:55Z"
@@ -94,14 +109,14 @@ Return ONLY this JSON structure:
   "closePrice": close_price_number,
   "tp": take_profit_from_column_6,
   "sl": stop_loss_from_column_7,
-  "position": "Open or Closed",
+  "position": "Open, Closed, All Closed, or Completed",
   "openTime": "ISO_datetime_string",
   "closeTime": "ISO_datetime_string",
   "reason": "reason_if_visible",
   "pnlUsd": profit_loss_number
 }
 
-MANDATORY: Extract T/P and S/L from columns 6 and 7. Do NOT return null for these if numbers are visible in those positions.`;
+MANDATORY: Extract T/P and S/L from columns 6 and 7. For position, only return text indicating if trade is open/closed, NOT position/order ID numbers.`;
 
       const result = await this.retryWithBackoff(async () => {
         return await this.model.generateContent([
@@ -177,6 +192,48 @@ MANDATORY: Extract T/P and S/L from columns 6 and 7. Do NOT return null for thes
   }
 
   private validateAndCleanExtractedData(data: any): ExtractedTradeData {
+    // Helper function to normalize position values
+    const normalizePosition = (status: string | undefined): 'Open' | 'Closed' | undefined => {
+      if (!status) return undefined;
+      
+      // If status is a number or looks like an ID, return undefined
+      if (!isNaN(status as any) || /^\d+$/.test(status)) {
+        return undefined;
+      }
+      
+      const lowerStatus = status.toLowerCase().trim();
+      
+      // Only accept specific status texts
+      if (lowerStatus === 'open') return 'Open';
+      if (['closed', 'all closed', 'completed', 'complete'].includes(lowerStatus)) return 'Closed';
+      
+      // For partial matches, be more strict
+      if (lowerStatus.startsWith('open')) return 'Open';
+      if (lowerStatus.includes('closed') || lowerStatus.includes('complete')) return 'Closed';
+      
+      return undefined;
+    };
+
+    // Helper function to normalize reason values
+    const normalizeReason = (reason: string | undefined): 'TP' | 'SL' | 'Early Close' | 'Other' | undefined => {
+      if (!reason) return undefined;
+      
+      const lowerReason = reason.toLowerCase().trim();
+      
+      // Direct matches
+      if (lowerReason === 'tp') return 'TP';
+      if (lowerReason === 'sl') return 'SL';
+      if (lowerReason === 'early close') return 'Early Close';
+      
+      // Pattern matches
+      if (lowerReason.includes('take profit') || lowerReason.includes('tp')) return 'TP';
+      if (lowerReason.includes('stop loss') || lowerReason.includes('sl')) return 'SL';
+      if (lowerReason.includes('early') && lowerReason.includes('clos')) return 'Early Close';
+      
+      // Default to 'Other' for any other reason
+      return 'Other';
+    };
+
     // Ensure all expected fields exist and have proper types
     const cleanData: ExtractedTradeData = {
       symbol: data.symbol || undefined,
@@ -186,12 +243,20 @@ MANDATORY: Extract T/P and S/L from columns 6 and 7. Do NOT return null for thes
       closePrice: this.parseNumber(data.closePrice),
       tp: this.parseNumber(data.tp),
       sl: this.parseNumber(data.sl),
-      position: data.position || undefined,
+      position: normalizePosition(data.position),
       openTime: this.parseDateTime(data.openTime),
       closeTime: this.parseDateTime(data.closeTime),
-      reason: data.reason || undefined,
+      reason: normalizeReason(data.reason),
       pnlUsd: this.parseNumber(data.pnlUsd)
     };
+
+    // Add debug logging for normalization
+    console.log('Data normalization:', {
+      rawPosition: data.position,
+      normalizedPosition: cleanData.position,
+      rawReason: data.reason,
+      normalizedReason: cleanData.reason
+    });
 
     return cleanData;
   }
@@ -270,6 +335,98 @@ MANDATORY: Extract T/P and S/L from columns 6 and 7. Do NOT return null for thes
     }
   }
 
+  private async fetchMarketData(query: string): Promise<MarketData> {
+    try {
+      // Always perform a market-relevant search based on the query
+      const searchQuery = `${query} market finance trading analysis current price`;
+      console.log('Searching Exa with query:', searchQuery);
+
+      // Call Exa API for real-time search
+      const searchResponse = await fetch('https://api.exa.ai/search', {
+        method: 'POST',
+        headers: {
+          'x-api-key': this.EXA_API_KEY,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          query: searchQuery,
+          numResults: 5,
+          useAutoprompt: true,
+          type: "keyword",
+          includeDomains: [
+            "reuters.com",
+            "bloomberg.com",
+            "ft.com",
+            "wsj.com",
+            "cnbc.com",
+            "marketwatch.com",
+            "investing.com",
+            "finance.yahoo.com",
+            "tradingview.com",
+            "seekingalpha.com"
+          ],
+          dateRange: {
+            start: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(), // Last 24 hours
+            end: new Date().toISOString()
+          }
+        })
+      });
+
+      if (!searchResponse.ok) {
+        throw new Error('Failed to fetch from Exa API');
+      }
+
+      const searchData = await searchResponse.json();
+      
+      if (!searchData.results?.length) {
+        return { searchResults: [] };
+      }
+
+      // Get content for each result
+      const contentPromises = searchData.results.map(async (result: any) => {
+        try {
+          const contentResponse = await fetch('https://api.exa.ai/get_contents', {
+            method: 'POST',
+            headers: {
+              'x-api-key': this.EXA_API_KEY,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              ids: [result.id]
+            })
+          });
+
+          if (!contentResponse.ok) {
+            return result;
+          }
+
+          const contentData = await contentResponse.json();
+          return {
+            ...result,
+            content: contentData.contents[0]?.extract || ''
+          };
+        } catch (error) {
+          console.error('Error fetching content for result:', result.id, error);
+          return result;
+        }
+      });
+
+      const enrichedResults = await Promise.all(contentPromises);
+      return {
+        searchResults: enrichedResults.map(result => ({
+          title: result.title,
+          url: result.url,
+          publishedDate: result.publishedDate,
+          author: result.author,
+          content: result.content
+        }))
+      };
+    } catch (error) {
+      console.error('Error in fetchMarketData:', error);
+      return { searchResults: [] };
+    }
+  }
+
   async processMessage(message: string, userId: string): Promise<string> {
     try {
       // Get user's trading context with simplified query
@@ -293,12 +450,52 @@ MANDATORY: Extract T/P and S/L from columns 6 and 7. Do NOT return null for thes
       const totalTrades = trades?.length || 0;
       const winRate = totalTrades ? (winningTrades / totalTrades) * 100 : 0;
 
-      // Simplified system prompt to reduce token usage
+      // Fetch real-time market data
+      const marketData = await this.fetchMarketData(message);
+      console.log('Market data fetched:', marketData);
+
+      // Create enriched message with market data
+      let enrichedMessage = message;
+      if (marketData.searchResults?.length) {
+        enrichedMessage += '\n\nRelevant Market Information:\n' + marketData.searchResults
+          .map(result => {
+            let summary = `📰 ${result.title}`;
+            if (result.publishedDate) {
+              summary += ` (${new Date(result.publishedDate).toLocaleDateString()})`;
+            }
+            if (result.content) {
+              // Limit content to first two sentences for clarity
+              const sentences = result.content.split(/[.!?]+/).slice(0, 2).join('. ') + '.';
+              summary += `\n${sentences}`;
+            }
+            return summary;
+          })
+          .join('\n\n');
+      }
+
+      // Enhanced system prompt with market data
       const systemPrompt = `You are Sydney, a friendly AI trading assistant. Be conversational and helpful.
 
 User Stats: ${totalTrades} trades, ${winRate.toFixed(1)}% win rate, $${totalProfit.toFixed(2)} total P/L
 
-Respond naturally to: "${message}"
+${marketData.searchResults?.length ? `
+🌐 LIVE MARKET DATA:
+${marketData.searchResults.map(result => {
+  let info = `📰 ${result.title}`;
+  if (result.publishedDate) {
+    info += ` (${new Date(result.publishedDate).toLocaleDateString()})`;
+  }
+  if (result.content) {
+    info += `\n${result.content.slice(0, 200)}...`;
+  }
+  return info;
+}).join('\n\n')}
+
+Please analyze this real-time market data and provide insights relevant to the user's query. Focus on extracting key market trends, price movements, and significant news that could impact trading decisions.
+` : ''}
+
+Original Message: "${message}"
+${marketData.searchResults?.length ? `Enriched Message with Market Data: "${enrichedMessage}"` : ''}
 
 Keep responses under 150 words. Use emojis sparingly.`;
 
@@ -414,7 +611,7 @@ Keep responses under 150 words. Use emojis sparingly.`;
 5. Margin Adjustment History - usually "View History" text or actual history
 6. Close Time - format: "2024-05-28 21:11:47" or similar timestamp
 7. Closing Quantity - amount with USDT suffix (e.g., "548.5579 USDT")
-8. Status - "All Closed", "Open", etc.
+8. Trade Status - "Open", "Closed", "All Closed", "Completed" (NOT the position/order ID number)
 9. Realized PNL - profit/loss amount, often in green/red (e.g., "4,881 USDT", "+2,144 USD")
 10. Open Time - format: "2024-05-28 18:57:22" or similar timestamp  
 11. Avg Entry Price - entry price (numbers like 108,045.3)
@@ -427,11 +624,11 @@ Keep responses under 150 words. Use emojis sparingly.`;
 - Realized PNL may have "USDT" or "USD" suffix - extract just the number
 - Numbers may have commas (107,128.9) - extract as numbers without commas
 - Look for + or - signs in PNL values for profit/loss
-- The table has NO headers - identify columns by position from left to right
-
-**DATETIME HANDLING:**
-- Times are already in format "2024-05-28 21:11:47"
-- Convert to ISO format: "2024-05-28T21:11:47Z"
+- For Trade Status:
+  - Look for text indicating if trade is open or closed
+  - Do NOT extract position/order ID numbers as status
+  - Valid status values are: "Open", "Closed", "All Closed", "Completed"
+  - If you see a number instead of status, set status to null
 
 Return ONLY this JSON structure:
 
@@ -443,12 +640,13 @@ Return ONLY this JSON structure:
   "marginAdjustmentHistory": "extracted_history_or_null",
   "closeTime": "ISO_datetime_string",
   "closingQuantity": closing_quantity_number,
+  "status": "Open, Closed, All Closed, or Completed",
   "realizedPnl": realized_pnl_number,
   "openTime": "ISO_datetime_string",
   "avgEntryPrice": entry_price_number
 }
 
-MANDATORY: Extract ALL visible numeric values and times. Do NOT return null for fields that have visible data in the table.`;
+MANDATORY: Extract ALL visible numeric values and times. Do NOT return null for fields that have visible data in the table. For status, only return text indicating if trade is open/closed, NOT position/order ID numbers.`;
 
       const result = await this.retryWithBackoff(async () => {
         return await this.model.generateContent([
@@ -524,6 +722,34 @@ MANDATORY: Extract ALL visible numeric values and times. Do NOT return null for 
   }
 
   private validateAndCleanCryptoData(data: any): ExtractedTradeData {
+    // Helper function to normalize position values
+    const normalizePosition = (status: string | undefined): 'Open' | 'Closed' | undefined => {
+      if (!status) return undefined;
+      
+      // If status is a number or looks like an ID, return undefined
+      if (!isNaN(status as any) || /^\d+$/.test(status)) {
+        return undefined;
+      }
+      
+      const lowerStatus = status.toLowerCase().trim();
+      
+      // Only accept specific status texts
+      if (lowerStatus === 'open') return 'Open';
+      if (['closed', 'all closed', 'completed', 'complete'].includes(lowerStatus)) return 'Closed';
+      
+      // For partial matches, be more strict
+      if (lowerStatus.startsWith('open')) return 'Open';
+      if (lowerStatus.includes('closed') || lowerStatus.includes('complete')) return 'Closed';
+      
+      return undefined;
+    };
+
+    // Map status to position if it exists
+    if (data.status) {
+      data.position = data.status;
+      delete data.status;
+    }
+
     // Ensure all expected crypto fields exist and have proper types
     const cleanData: ExtractedTradeData = {
       // Crypto specific fields
@@ -544,8 +770,15 @@ MANDATORY: Extract ALL visible numeric values and times. Do NOT return null for 
       openPrice: this.parseNumber(data.avgEntryPrice),
       closePrice: this.parseNumber(data.avgClosePrice),
       pnlUsd: this.parseNumber(data.realizedPnl),
-      volumeLot: this.parseNumber(data.closingQuantity)
+      volumeLot: this.parseNumber(data.closingQuantity),
+      position: normalizePosition(data.position) // Normalize the position field
     };
+
+    // Add debug logging for position normalization
+    console.log('Position normalization:', {
+      rawPosition: data.position,
+      normalizedPosition: cleanData.position
+    });
 
     return cleanData;
   }

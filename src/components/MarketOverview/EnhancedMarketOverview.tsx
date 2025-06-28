@@ -353,20 +353,20 @@ const EnhancedMarketOverview: React.FC = () => {
                             {article.title}
                           </h4>
                           <p className="text-slate-400 text-sm mb-2 line-clamp-2">
-                            {article.summary}
+                            {article.description}
                           </p>
                           <div className="flex items-center justify-between">
                             <div className="flex items-center space-x-2">
                               <span className="text-slate-500 text-xs">
-                                {article.source}
+                                {article.source_name}
                               </span>
                               <span className="text-slate-600">•</span>
                               <span className="text-slate-500 text-xs">
-                                {new Date(article.publishedAt).toLocaleDateString()}
+                                {new Date(article.pubDate).toLocaleDateString()}
                               </span>
                             </div>
                             <a
-                              href={article.url}
+                              href={article.link}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="text-blue-400 hover:text-blue-300 transition-colors"
@@ -375,10 +375,10 @@ const EnhancedMarketOverview: React.FC = () => {
                             </a>
                           </div>
                         </div>
-                        {article.imageUrl && (
+                        {article.image_url && (
                           <div className="ml-4 flex-shrink-0">
                             <img
-                              src={article.imageUrl}
+                              src={article.image_url}
                               alt={article.title}
                               className="w-16 h-16 object-cover rounded-lg"
                               onError={(e) => {
